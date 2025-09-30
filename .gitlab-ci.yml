@@ -3,8 +3,9 @@ workflow:
     - if: $CI_PIPELINE_SOURCE == "web"
 
 stages:
-  - auth
-  - terraform
+  - prepare
+  - plan
+  - apply
 
 variables:
   TF_IN_AUTOMATION: "true"
@@ -36,75 +37,45 @@ variables:
     - export TF_VAR_vm_name="vm-${GITLAB_USER_LOGIN}"
     
     # Azure Login
-    - echo "🔑 Logging into Azure..."
-    - az login --service-principal \
-        --username $ARM_CLIENT_ID \
-        --password $ARM_CLIENT_SECRET \
-        --tenant $ARM_TENANT_ID
-    - az account set --subscription $ARM_SUBSCRIPTION_ID
-    - echo "✅ Azure authentication successful"
-
-create_infrastructure:
-  extends: .terraform_template
-  stage: terraform
-  rules:
-    - if: $ACTION == "create"
-  script:
-    - terraform init -input=false
-    - terraform workspace new ${TF_WORKSPACE} || terraform workspace select ${TF_WORKSPACE}
-    - terraform plan -out=tfplan
-    - terraform apply -auto-approve tfplan
-  environment:
-    name: ${CI_PROJECT_NAME}-${GITLAB_USER_LOGIN}
-
-destroy_infrastructure:
-  extends: .terraform_template
-  stage: terraform
-  rules:
-    - if: $ACTION == "destroy"
-  script:
-    - terraform init -input=false
-    - terraform workspace new ${TF_WORKSPACE} || terraform workspace select ${TF_WORKSPACE}
-    - terraform plan -destroy -out=tfplan
-    - terraform apply -auto-approve tfplan
-  environment:
-    name: ${CI_PROJECT_NAME}-${GITLAB_USER_LOGIN}
-    action: stop
-
-workflow:
-  rules:
-    - if: $CI_PIPELINE_SOURCE == "web"
-
-auth:
-  stage: auth
-  script:
     - echo " Logging into Azure..."
     - az login --service-principal \
         --username $ARM_CLIENT_ID \
         --password $ARM_CLIENT_SECRET \
         --tenant $ARM_TENANT_ID
     - az account set --subscription $ARM_SUBSCRIPTION_ID
-    - echo "Azure authentication successful"
+    - echo " Azure authentication successful"
 
-validate:
-  stage: validate
+prepare:
+  extends: .terraform_template
+  stage: prepare
   script:
     - terraform init -input=false
     - terraform workspace new ${TF_WORKSPACE} || terraform workspace select ${TF_WORKSPACE}
     - terraform validate
+  rules:
+    - if: $ACTION =~ /^(create|destroy)$/
 
 plan:
+  extends: .terraform_template
   stage: plan
   script:
     - terraform init -input=false
     - terraform workspace new ${TF_WORKSPACE} || terraform workspace select ${TF_WORKSPACE}
-    - terraform plan -out=tfplan
+    - |
+      if [ "$ACTION" == "destroy" ]; then
+        terraform plan -destroy -out=tfplan
+      else
+        terraform plan -out=tfplan
+      fi
   artifacts:
     paths:
       - tfplan
-    expire_in: 1 week
+    expire_in: 1 hour
+  rules:
+    - if: $ACTION =~ /^(create|destroy)$/
 
 apply:
+  extends: .terraform_template
   stage: apply
   script:
     - terraform init -input=false
@@ -112,18 +83,9 @@ apply:
     - terraform apply -auto-approve tfplan
   dependencies:
     - plan
-  when: manual
-  environment:
-    name: ${CI_PROJECT_NAME}-${GITLAB_USER_LOGIN}
-    on_stop: destroy
-
-destroy:
-  stage: destroy
-  script:
-    - terraform init -input=false
-    - terraform workspace new ${TF_WORKSPACE} || terraform workspace select ${TF_WORKSPACE}
-    - terraform destroy -auto-approve
-  when: manual
   environment:
     name: ${CI_PROJECT_NAME}-${GITLAB_USER_LOGIN}
     action: stop
+  when: manual
+  rules:
+    - if: $ACTION =~ /^(create|destroy)$/
