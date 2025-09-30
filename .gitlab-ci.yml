@@ -11,6 +11,8 @@ variables:
   ARM_CLIENT_SECRET: $AZURE_CLIENT_SECRET
   ARM_TENANT_ID: $AZURE_TENANT_ID
   ARM_SUBSCRIPTION_ID: $AZURE_SUBSCRIPTION_ID
+  TF_VAR_sub_id: $AZURE_SUBSCRIPTION_ID
+  TF_VAR_location: "Central India"  # Can be overridden by GitLab variable
 
 workflow:
   rules:
