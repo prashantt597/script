@@ -1,0 +1,82 @@
+GitLab CI/CD Pipeline with Azure + Workspaces
+ 
+ 
+Here’s a working .gitlab-ci.yml:
+ 
+stages:
+  - auth
+  - validate
+  - plan
+  - apply
+ 
+variables:
+  TF_ENV: "dev"   # default env if not overridden
+  TF_IN_AUTOMATION: "true"
+  ARM_CLIENT_ID: $AZURE_CLIENT_ID
+  ARM_CLIENT_SECRET: $AZURE_CLIENT_SECRET
+  ARM_TENANT_ID: $AZURE_TENANT_ID
+  ARM_SUBSCRIPTION_ID: $AZURE_SUBSCRIPTION_ID
+ 
+before_script:
+  # Install Terraform and Azure CLI
+  - apk add --no-cache bash curl jq unzip git python3 py3-pip
+  - curl -LO "https://releases.hashicorp.com/terraform/1.9.5/terraform_1.9.5_linux_amd64.zip"
+  - unzip terraform_1.9.5_linux_amd64.zip -d /usr/local/bin
+  - terraform --version
+  - az --version || pip install azure-cli
+ 
+auth:
+  stage: auth
+  script:
+    - echo "🔑 Logging into Azure..."
+    - az login --service-principal \
+        --username $ARM_CLIENT_ID \
+        --password $ARM_CLIENT_SECRET \
+        --tenant $ARM_TENANT_ID
+    - az account set --subscription $ARM_SUBSCRIPTION_ID
+    - echo "✅ Azure authentication successful"
+ 
+validate:
+  stage: validate
+  script:
+    - terraform init -input=false
+    - terraform workspace select $TF_ENV || terraform workspace new $TF_ENV
+    - terraform validate
+ 
+plan:
+  stage: plan
+  script:
+    - terraform init -input=false
+    - terraform workspace select $TF_ENV || terraform workspace new $TF_ENV
+    - terraform plan -var="env=$TF_ENV" -out=tfplan
+  artifacts:
+    paths:
+      - tfplan
+ 
+apply:
+  stage: apply
+  script:
+    - terraform init -input=false
+    - terraform workspace select $TF_ENV || terraform workspace new $TF_ENV
+    - terraform apply -auto-approve tfplan
+  when: manual   # avoid accidental applies
+✅ How it works
+auth stage → logs into Azure using service principal credentials stored in GitLab variables.
+ 
+validate stage → ensures Terraform code is valid.
+ 
+plan stage → generates an execution plan for the selected environment (TF_ENV).
+ 
+apply stage → applies the plan (manual approval to avoid accidents).
+ 
+Each environment (dev, qa, umesh) gets its own workspace and isolated terraform.tfstate.
+ 
+ 
+Run a pipeline with:
+ 
+Default (dev):
+ 
+TF_ENV=dev
+ 
+ 
+Custom (your env):

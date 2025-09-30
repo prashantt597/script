@@ -1,0 +1,93 @@
+stages:
+  - auth
+  - validate
+  - plan
+  - apply
+  - destroy
+
+variables:
+  TF_IN_AUTOMATION: "true"
+  ARM_CLIENT_ID: $AZURE_CLIENT_ID
+  ARM_CLIENT_SECRET: $AZURE_CLIENT_SECRET
+  ARM_TENANT_ID: $AZURE_TENANT_ID
+  ARM_SUBSCRIPTION_ID: $AZURE_SUBSCRIPTION_ID
+
+workflow:
+  rules:
+    - if: $CI_MERGE_REQUEST_ID
+      when: never
+    - if: $CI_COMMIT_TAG
+      when: never
+    - when: always
+
+before_script:
+  # Install required tools
+  - apk add --no-cache bash curl jq unzip git python3 py3-pip
+  - curl -LO "https://releases.hashicorp.com/terraform/1.9.5/terraform_1.9.5_linux_amd64.zip"
+  - unzip terraform_1.9.5_linux_amd64.zip -d /usr/local/bin
+  - terraform --version
+  - az --version || pip install azure-cli
+  
+  # Generate unique workspace name based on GitLab user
+  - export TF_WORKSPACE="${CI_PROJECT_NAME}-${GITLAB_USER_LOGIN}"
+  
+  # Generate unique resource names
+  - export TF_VAR_resource_group_name="mdp-${GITLAB_USER_LOGIN}"
+  - export TF_VAR_vnet_name="mdp-vnet-${GITLAB_USER_LOGIN}"
+  - export TF_VAR_subnet_name="mdp-subnet-${GITLAB_USER_LOGIN}"
+  - export TF_VAR_nic_name="mdp-nic-${GITLAB_USER_LOGIN}"
+  - export TF_VAR_nsg_name="mdp-nsg-${GITLAB_USER_LOGIN}"
+  - export TF_VAR_vm_name="vm-${GITLAB_USER_LOGIN}"
+
+auth:
+  stage: auth
+  script:
+    - echo " Logging into Azure..."
+    - az login --service-principal \
+        --username $ARM_CLIENT_ID \
+        --password $ARM_CLIENT_SECRET \
+        --tenant $ARM_TENANT_ID
+    - az account set --subscription $ARM_SUBSCRIPTION_ID
+    - echo "Azure authentication successful"
+
+validate:
+  stage: validate
+  script:
+    - terraform init -input=false
+    - terraform workspace new ${TF_WORKSPACE} || terraform workspace select ${TF_WORKSPACE}
+    - terraform validate
+
+plan:
+  stage: plan
+  script:
+    - terraform init -input=false
+    - terraform workspace new ${TF_WORKSPACE} || terraform workspace select ${TF_WORKSPACE}
+    - terraform plan -out=tfplan
+  artifacts:
+    paths:
+      - tfplan
+    expire_in: 1 week
+
+apply:
+  stage: apply
+  script:
+    - terraform init -input=false
+    - terraform workspace new ${TF_WORKSPACE} || terraform workspace select ${TF_WORKSPACE}
+    - terraform apply -auto-approve tfplan
+  dependencies:
+    - plan
+  when: manual
+  environment:
+    name: ${CI_PROJECT_NAME}-${GITLAB_USER_LOGIN}
+    on_stop: destroy
+
+destroy:
+  stage: destroy
+  script:
+    - terraform init -input=false
+    - terraform workspace new ${TF_WORKSPACE} || terraform workspace select ${TF_WORKSPACE}
+    - terraform destroy -auto-approve
+  when: manual
+  environment:
+    name: ${CI_PROJECT_NAME}-${GITLAB_USER_LOGIN}
+    action: stop
